@@ -4,8 +4,6 @@
 // Read-only independent-review admission gate. No PR-head code is executed.
 // A PASS is supplemental evidence; protected source-repository checks and
 // eligible GitHub approvals remain mandatory.
-const { pathToFileURL } = require('node:url');
-
 const SHA = /^[0-9a-f]{40}$/i;
 const REPO = /^atto-lang\/atto-source\.[a-z][a-z0-9-]*$/;
 const CHECK_NAMES = Object.freeze({
@@ -29,13 +27,17 @@ function configFromEnv(env = process.env) {
       openai: numericId(env.ATTO_OPENAI_APP_ID),
       anthropic: numericId(env.ATTO_ANTHROPIC_APP_ID),
     },
+    aiReviewers: {
+      openai: numericId(env.ATTO_OPENAI_REVIEWER_ID),
+      anthropic: numericId(env.ATTO_ANTHROPIC_REVIEWER_ID),
+    },
   };
   return config;
 }
 
 function evaluate({ repo, pr, reviews, checks, users, repoId, expectedHead }, config) {
   const blockers = [];
-  const receipt = { head: pr?.head?.sha || null, human: {}, ai: {} };
+  const receipt = { head: pr?.head?.sha || null, human: {}, aiReview: {}, ai: {} };
   if (!REPO.test(repo || '')) blockers.push('unallowlisted target repository');
   if (!SHA.test(pr?.head?.sha || '')) blockers.push('missing/invalid PR head SHA');
   if (expectedHead && expectedHead !== pr?.head?.sha) blockers.push('PR head SHA changed');
@@ -53,6 +55,10 @@ function evaluate({ repo, pr, reviews, checks, users, repoId, expectedHead }, co
   const humanIds = Object.values(config.humans || {});
   if (humanIds.length !== 2 || new Set(humanIds).size !== 2)
     blockers.push('human reviewer identities must be distinct');
+  const aiReviewerIds = Object.values(config.aiReviewers || {});
+  if (aiReviewerIds.length !== 2 || !aiReviewerIds.every(numericId) ||
+      new Set([...humanIds, ...aiReviewerIds]).size !== 4)
+    blockers.push('four GitHub review identities must be pinned and distinct');
   const appIds = Object.values(config.apps || {});
   if (appIds.length !== 2 || !appIds.every(numericId) || new Set(appIds).size !== 2)
     blockers.push('OpenAI and Anthropic require two distinct pinned GitHub Apps');
@@ -76,6 +82,18 @@ function evaluate({ repo, pr, reviews, checks, users, repoId, expectedHead }, co
     if (!review || review.state !== 'APPROVED' || review.commit_id !== pr?.head?.sha ||
         !review.submitted_at || review.user?.type !== 'User') {
       blockers.push(label + ': no effective APPROVED review on current exact head');
+    }
+  }
+  // Provider-owned checks complement, but never replace, real submitted
+  // GitHub APPROVED bot reviews by distinct allowlisted reviewer accounts.
+  for (const [family, id] of Object.entries(config.aiReviewers || {})) {
+    const review = latest.get(id);
+    receipt.aiReview[family] = review ?
+      { reviewId: review.id, state: review.state, commit: review.commit_id, botId: review.user?.id } : null;
+    if (id && pr?.user?.id === id) blockers.push(family + ': PR author cannot self-approve');
+    if (!review || review.state !== 'APPROVED' || review.commit_id !== pr?.head?.sha ||
+        !review.submitted_at || review.user?.type !== 'Bot') {
+      blockers.push(family + ': no formal APPROVED GitHub bot review on current exact head');
     }
   }
   for (const review of latest.values()) {
@@ -156,7 +174,8 @@ async function main(argv = process.argv.slice(2), env = process.env) {
   if (!token) throw Error('GITHUB_TOKEN/GH_TOKEN not configured');
   const config = configFromEnv(env);
   if (!Object.values(config.humans).every(numericId) ||
-      !Object.values(config.apps).every(numericId))
+      !Object.values(config.apps).every(numericId) ||
+      !Object.values(config.aiReviewers).every(numericId))
     throw Error('pinned identities missing; fail closed');
   const evidence = await collect(argv[0], argv[1], token);
   const result = evaluate(evidence, config);
