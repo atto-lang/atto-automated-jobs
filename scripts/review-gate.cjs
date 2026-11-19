@@ -35,7 +35,7 @@ function configFromEnv(env = process.env) {
   return config;
 }
 
-function evaluate({ repo, pr, reviews, checks, users, repoId, expectedHead }, config) {
+function evaluate({ repo, pr, reviews, checks, users, permissions, repoId, expectedHead }, config) {
   const blockers = [];
   const receipt = { head: pr?.head?.sha || null, human: {}, aiReview: {}, ai: {} };
   if (!REPO.test(repo || '')) blockers.push('unallowlisted target repository');
@@ -51,6 +51,8 @@ function evaluate({ repo, pr, reviews, checks, users, repoId, expectedHead }, co
     if (users?.[label]?.id !== id || users?.[label]?.login?.toLowerCase() !== label.toLowerCase())
       blockers.push(label + ': GitHub account does not match pinned identity');
     if (id && pr?.user?.id === id) blockers.push(label + ': author cannot self-approve');
+    if (!['write', 'maintain', 'admin'].includes(permissions?.[label]))
+      blockers.push(label + ': cannot verify eligible write-level repository access');
   }
   const humanIds = Object.values(config.humans || {});
   if (humanIds.length !== 2 || new Set(humanIds).size !== 2)
@@ -72,6 +74,8 @@ function evaluate({ repo, pr, reviews, checks, users, repoId, expectedHead }, co
       blockers.push('unattributable GitHub review'); continue;
     }
     const state = review.state;
+    if (!['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED', 'COMMENTED', 'PENDING'].includes(state))
+      blockers.push('unknown GitHub review state');
     if (state === 'APPROVED' || state === 'CHANGES_REQUESTED' || state === 'DISMISSED') {
       latest.set(review.user.id, review);
     }
@@ -151,11 +155,13 @@ async function collect(repo, number, token) {
   if (!REPO.test(repo) || !/^[1-9][0-9]*$/.test(String(number)))
     throw Error('unallowlisted repo or invalid PR number');
   const base = '/repos/' + repo;
-  const [pr, repository, reviews, users1, users2] = await Promise.all([
+  const [pr, repository, reviews, users1, users2, perm1, perm2] = await Promise.all([
     api(base + '/pulls/' + number, token),
     api(base, token),
     pages(base + '/pulls/' + number + '/reviews', token),
     api('/users/the1mills', token), api('/users/ORESoftware', token),
+    api(base + '/collaborators/the1mills/permission', token),
+    api(base + '/collaborators/ORESoftware/permission', token),
   ]);
   if (!SHA.test(pr?.head?.sha || '')) throw Error('invalid live PR SHA');
   const checks = await pages(base + '/commits/' + pr.head.sha + '/check-runs', token);
@@ -164,7 +170,9 @@ async function collect(repo, number, token) {
     throw Error('PR changed during verification; rerun on latest head');
   return {
     repo, pr, reviews, checks, repoId: repository.id,
-    users: { the1mills: users1, ORESoftware: users2 }, expectedHead: pr.head.sha,
+    users: { the1mills: users1, ORESoftware: users2 },
+    permissions: { the1mills: perm1?.permission, ORESoftware: perm2?.permission },
+    expectedHead: pr.head.sha,
   };
 }
 
