@@ -144,6 +144,9 @@ fn reconcile_one(t: &Target, rs: &[&Rule], workspace: &Path) -> Result<bool, Str
     git(&dir, &["config", "user.name", "atto-parity[bot]"])?;
     git(&dir, &["config", "user.email", "atto-parity[bot]@users.noreply.github.com"])?;
     let remote = git(&dir, &["ls-remote", "--heads", "origin", BOT_BRANCH])?;
+    if !remote.trim().is_empty() && existing.is_none() {
+        return Err(format!("bot branch exists without a controller-owned open PR in {}; manual cleanup required", t.repo));
+    }
     if remote.trim().is_empty() {
         git(&dir, &["switch", "-c", BOT_BRANCH, &format!("origin/{base}")])?;
     } else {
