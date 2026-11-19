@@ -25,3 +25,7 @@ cargo run --locked -- plan
 ```
 
 `plan` is offline and read-only. Nightly `reconcile` requires `GH_TOKEN` with scoped repository access, and only generates draft PRs; it never merges, force-pushes, or changes application/runtime code.
+
+## Independent AI + human review safety
+
+The [read-only review verifier](docs/REVIEW_GATE.md) checks four independently attributable approvals on an exact PR head: `the1mills`, `ORESoftware`, a pinned OpenAI reviewer App and a distinct pinned Anthropic reviewer App. Its offline negative tests are run alongside Rust parity-policy tests. **This is an audit component, not an installed merge-protection rule**: backend maintainers must install a trusted exact-HEAD check publisher and enforce it with per-repo branch rulesets before relying on it to block merges. Nightly parity-generated PRs remain draft; no auto-merge is enabled.
