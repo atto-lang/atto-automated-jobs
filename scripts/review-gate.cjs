@@ -165,9 +165,27 @@ async function collect(repo, number, token) {
   ]);
   if (!SHA.test(pr?.head?.sha || '')) throw Error('invalid live PR SHA');
   const checks = await pages(base + '/commits/' + pr.head.sha + '/check-runs', token);
-  const latest = await api(base + '/pulls/' + number, token);
-  if (latest.head?.sha !== pr.head.sha || latest.updated_at !== pr.updated_at)
+  // Double-read mutable review and check state, not just the PR's updated_at;
+  // GitHub does not guarantee that every review/check mutation changes PR metadata.
+  const [latest, freshReviews, freshChecks] = await Promise.all([
+    api(base + '/pulls/' + number, token),
+    pages(base + '/pulls/' + number + '/reviews', token),
+    pages(base + '/commits/' + pr.head.sha + '/check-runs', token),
+  ]);
+  if (latest.head?.sha !== pr.head.sha || latest.updated_at !== pr.updated_at ||
+      latest.state !== pr.state || latest.draft !== pr.draft)
     throw Error('PR changed during verification; rerun on latest head');
+  const reviewDigest = values => JSON.stringify(values.map(x => ({
+    id: x?.id, user: x?.user?.id, state: x?.state,
+    commit: x?.commit_id, submitted: x?.submitted_at,
+  })).sort((a, b) => a.id - b.id));
+  const checkDigest = values => JSON.stringify(values.map(x => ({
+    id: x?.id, name: x?.name, app: x?.app?.id, head: x?.head_sha,
+    status: x?.status, conclusion: x?.conclusion,
+  })).sort((a, b) => a.id - b.id));
+  if (reviewDigest(reviews) !== reviewDigest(freshReviews) ||
+      checkDigest(checks) !== checkDigest(freshChecks))
+    throw Error('review or AI check changed during verification; rerun');
   return {
     repo, pr, reviews, checks, repoId: repository.id,
     users: { the1mills: users1, ORESoftware: users2 },
