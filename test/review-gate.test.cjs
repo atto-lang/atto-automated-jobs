@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { evaluate, numericId, configFromEnv } = require('../scripts/review-gate.cjs');
+const { evaluate, numericId, configFromEnv, collect, pages } = require('../scripts/review-gate.cjs');
 
 const head = 'a'.repeat(40);
 const repo = 'atto-lang/atto-source.rs';
@@ -196,4 +196,87 @@ test('missing collaborator permission proof fails closed', () => {
 test('unknown GitHub review state fails closed rather than silently ignored', () => {
   const f = fixture(); f.reviews.push(review(40, 777888, 'FUTURE_UNDOCUMENTED'));
   denied(f, 'unknown GitHub review state');
+});
+
+test('collector walks authenticated PR, reviews, provider checks and permission evidence', async () => {
+  const f = fixture(); f.pr.updated_at = '2026-11-18T12:00:00Z';
+  const prefix = '/repos/' + repo;
+  const entries = {
+    [prefix + '/pulls/77']: f.pr,
+    [prefix]: { id: 42 },
+    [prefix + '/pulls/77/reviews?per_page=100&page=1']: f.reviews,
+    [prefix + '/commits/' + head + '/check-runs?per_page=100&page=1']: { check_runs: f.checks },
+    '/users/the1mills': f.users.the1mills,
+    '/users/ORESoftware': f.users.ORESoftware,
+    [prefix + '/collaborators/the1mills/permission']: { permission: 'admin' },
+    [prefix + '/collaborators/ORESoftware/permission']: { permission: 'admin' },
+  };
+  const original = global.fetch;
+  const visited = [];
+  global.fetch = async url => {
+    const path = new URL(url).pathname + new URL(url).search;
+    visited.push(path);
+    assert.ok(Object.hasOwn(entries, path), 'unexpected API path: ' + path);
+    return { ok: true, json: async () => entries[path] };
+  };
+  try {
+    const evidence = await collect(repo, 77, 'test-token');
+    assert.equal(evidence.repoId, 42);
+    assert.equal(verdict(evidence).pass, true);
+    assert.ok(visited.length >= 9);
+  } finally {
+    global.fetch = original;
+  }
+});
+test('collector detects PR changing during evidence collection', async () => {
+  const f = fixture(); f.pr.updated_at = 'v1';
+  const original = global.fetch;
+  let prReads = 0;
+  global.fetch = async url => {
+    const path = new URL(url).pathname + new URL(url).search;
+    if (path.endsWith('/pulls/8')) {
+      prReads++;
+      return { ok: true, json: async () => ({ ...f.pr, updated_at: prReads === 1 ? 'v1' : 'v2' }) };
+    }
+    if (path.endsWith('/reviews?per_page=100&page=1')) return { ok: true, json: async () => f.reviews };
+    if (path.endsWith('/check-runs?per_page=100&page=1'))
+      return { ok: true, json: async () => ({ check_runs: f.checks }) };
+    if (path.endsWith('/collaborators/the1mills/permission') ||
+        path.endsWith('/collaborators/ORESoftware/permission'))
+      return { ok: true, json: async () => ({ permission: 'admin' }) };
+    if (path === '/users/the1mills') return { ok: true, json: async () => f.users.the1mills };
+    if (path === '/users/ORESoftware') return { ok: true, json: async () => f.users.ORESoftware };
+    if (path === '/repos/' + repo) return { ok: true, json: async () => ({ id: 42 }) };
+    throw Error('unexpected API path ' + path);
+  };
+  try {
+    await assert.rejects(() => collect(repo, 8, 'test-token'), /changed during verification/);
+  } finally {
+    global.fetch = original;
+  }
+});
+test('pagination reads an additional page rather than silently truncating 100 entries', async () => {
+  const original = global.fetch;
+  const paths = [];
+  global.fetch = async url => {
+    paths.push(url);
+    const page = Number(new URL(url).searchParams.get('page'));
+    return { ok: true, json: async () => page === 1 ? Array(100).fill({ id: 1 }) : [{ id: 2 }] };
+  };
+  try {
+    const result = await pages('/repos/' + repo + '/pulls/9/reviews', 'test-token');
+    assert.equal(result.length, 101);
+    assert.equal(paths.length, 2);
+  } finally {
+    global.fetch = original;
+  }
+});
+test('GitHub pagination cap fails closed instead of treating incomplete review history as complete', async () => {
+  const original = global.fetch;
+  global.fetch = async () => ({ ok: true, json: async () => Array(100).fill({ id: 1 }) });
+  try {
+    await assert.rejects(() => pages('/repos/' + repo + '/pulls/9/reviews', 'test-token'), /pagination cap/);
+  } finally {
+    global.fetch = original;
+  }
 });
