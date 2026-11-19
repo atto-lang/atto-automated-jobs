@@ -280,3 +280,62 @@ test('GitHub pagination cap fails closed instead of treating incomplete review h
     global.fetch = original;
   }
 });
+
+test('collector rejects review mutations that do not update PR metadata', async () => {
+  const f = fixture(); f.pr.updated_at = 'unchanged';
+  const original = global.fetch;
+  let reviewReads = 0;
+  global.fetch = async url => {
+    const path = new URL(url).pathname + new URL(url).search;
+    if (path.endsWith('/pulls/81')) return { ok: true, json: async () => f.pr };
+    if (path.endsWith('/reviews?per_page=100&page=1')) {
+      reviewReads++;
+      const rows = reviewReads === 1 ? f.reviews :
+        [...f.reviews, review(12, config.aiReviewers.anthropic, 'CHANGES_REQUESTED', head, 'Bot')];
+      return { ok: true, json: async () => rows };
+    }
+    if (path.endsWith('/check-runs?per_page=100&page=1'))
+      return { ok: true, json: async () => ({ check_runs: f.checks }) };
+    if (path.endsWith('/collaborators/the1mills/permission') ||
+        path.endsWith('/collaborators/ORESoftware/permission'))
+      return { ok: true, json: async () => ({ permission: 'admin' }) };
+    if (path === '/users/the1mills') return { ok: true, json: async () => f.users.the1mills };
+    if (path === '/users/ORESoftware') return { ok: true, json: async () => f.users.ORESoftware };
+    if (path === '/repos/' + repo) return { ok: true, json: async () => ({ id: 42 }) };
+    throw Error('unexpected API path ' + path);
+  };
+  try {
+    await assert.rejects(() => collect(repo, 81, 'test-token'), /review or AI check changed/);
+  } finally {
+    global.fetch = original;
+  }
+});
+test('collector rejects AI check conclusion changing mid-read', async () => {
+  const f = fixture(); f.pr.updated_at = 'unchanged';
+  const original = global.fetch;
+  let checkReads = 0;
+  global.fetch = async url => {
+    const path = new URL(url).pathname + new URL(url).search;
+    if (path.endsWith('/pulls/82')) return { ok: true, json: async () => f.pr };
+    if (path.endsWith('/reviews?per_page=100&page=1'))
+      return { ok: true, json: async () => f.reviews };
+    if (path.endsWith('/check-runs?per_page=100&page=1')) {
+      checkReads++;
+      const rows = structuredClone(f.checks);
+      if (checkReads > 1) rows[0].conclusion = 'failure';
+      return { ok: true, json: async () => ({ check_runs: rows }) };
+    }
+    if (path.endsWith('/collaborators/the1mills/permission') ||
+        path.endsWith('/collaborators/ORESoftware/permission'))
+      return { ok: true, json: async () => ({ permission: 'admin' }) };
+    if (path === '/users/the1mills') return { ok: true, json: async () => f.users.the1mills };
+    if (path === '/users/ORESoftware') return { ok: true, json: async () => f.users.ORESoftware };
+    if (path === '/repos/' + repo) return { ok: true, json: async () => ({ id: 42 }) };
+    throw Error('unexpected API path ' + path);
+  };
+  try {
+    await assert.rejects(() => collect(repo, 82, 'test-token'), /review or AI check changed/);
+  } finally {
+    global.fetch = original;
+  }
+});
