@@ -127,7 +127,7 @@ fn pr_state(repo: &str) -> Result<Option<(String, bool)>, String> {
 fn reconcile_one(t: &Target, rs: &[&Rule], workspace: &Path) -> Result<bool, String> {
     if rs.is_empty() { return Ok(false); }
     let existing = pr_state(&t.repo)?;
-    if let Some((_, false)) = existing {
+    if existing.as_ref().is_some_and(|(_, is_draft)| !*is_draft) {
         println!("SKIP {}: existing controller PR is ready for review", t.repo);
         return Ok(false);
     }
