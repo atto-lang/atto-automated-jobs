@@ -8,9 +8,10 @@ const repo = 'atto-lang/atto-source.rs';
 const config = {
   humans: { the1mills: 2148448, ORESoftware: 1234567 },
   apps: { openai: 998801, anthropic: 998802 },
+  aiReviewers: { openai: 887701, anthropic: 887702 },
 };
-const review = (id, userId, state = 'APPROVED', sha = head) => ({
-  id, user: { id: userId, type: 'User' }, state, commit_id: sha,
+const review = (id, userId, state = 'APPROVED', sha = head, type = 'User') => ({
+  id, user: { id: userId, type }, state, commit_id: sha,
   submitted_at: '2026-11-18T00:00:00Z',
 });
 const check = (id, name, appId, conclusion = 'success', sha = head) => ({
@@ -34,6 +35,8 @@ function fixture() {
     reviews: [
       review(1, config.humans.the1mills),
       review(2, config.humans.ORESoftware),
+      review(3, config.aiReviewers.openai, 'APPROVED', head, 'Bot'),
+      review(4, config.aiReviewers.anthropic, 'APPROVED', head, 'Bot'),
     ],
     checks: [
       check(20, 'atto-review/openai', config.apps.openai),
@@ -53,6 +56,7 @@ test('four independent exact-head reviews pass, with recorded receipts', () => {
   assert.equal(output.pass, true, output.blockers.join('; '));
   assert.equal(output.receipt.human.the1mills.reviewId, 1);
   assert.equal(output.receipt.ai.anthropic.appId, config.apps.anthropic);
+  assert.equal(output.receipt.aiReview.openai.botId, config.aiReviewers.openai);
 });
 test('a requested reviewer or COMMENTED review does not satisfy human approval', () => {
   const f = fixture(); f.reviews[1].state = 'COMMENTED'; denied(f, 'ORESoftware');
@@ -142,4 +146,40 @@ test('missing configuration fails closed', () => {
   assert.equal(c.humans.ORESoftware, null);
   assert.equal(c.apps.openai, null);
   assert.equal(c.apps.anthropic, null);
+  assert.equal(c.aiReviewers.openai, null);
+  assert.equal(c.aiReviewers.anthropic, null);
+});
+
+test('provider status without a formal submitted AI APPROVED review blocks', () => {
+  const f = fixture(); f.reviews = f.reviews.filter(x => x.user.id !== config.aiReviewers.openai);
+  denied(f, 'openai: no formal APPROVED');
+});
+test('AI COMMENTED review is not an approval', () => {
+  const f = fixture();
+  f.reviews.find(x => x.user.id === config.aiReviewers.anthropic).state = 'COMMENTED';
+  denied(f, 'anthropic: no formal APPROVED');
+});
+test('a human account cannot impersonate a trusted AI bot reviewer', () => {
+  const f = fixture();
+  f.reviews.find(x => x.user.id === config.aiReviewers.openai).user.type = 'User';
+  denied(f, 'openai: no formal APPROVED');
+});
+test('two AI providers cannot reuse one reviewer account ID', () => {
+  const f = fixture(); const policy = structuredClone(config);
+  policy.aiReviewers.anthropic = policy.aiReviewers.openai;
+  denied(f, 'four GitHub review identities', policy);
+});
+test('AI approval from earlier SHA is stale even when its provider check passes', () => {
+  const f = fixture();
+  f.reviews.find(x => x.user.id === config.aiReviewers.anthropic).commit_id = 'b'.repeat(40);
+  denied(f, 'anthropic: no formal APPROVED');
+});
+test('AI bot PR author cannot approve its own PR', () => {
+  const f = fixture(); f.pr.user.id = config.aiReviewers.openai;
+  denied(f, 'openai: PR author');
+});
+test('a later AI CHANGES_REQUESTED overrides earlier AI APPROVED', () => {
+  const f = fixture();
+  f.reviews.push(review(12, config.aiReviewers.anthropic, 'CHANGES_REQUESTED', head, 'Bot'));
+  denied(f, 'anthropic: no formal APPROVED');
 });
