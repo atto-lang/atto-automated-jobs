@@ -1,0 +1,35 @@
+# contract|phase|backend|obligation|reason
+class.field.default.v2|accepted|cranelift|required|Bare class fields have implicit val binding; explicit let is needed for rebinding
+class.field.default.v2|accepted|forge|required|Bare class fields have implicit val binding; explicit let is needed for rebinding
+class.field.default.v2|accepted|java|required|Bare class fields have implicit val binding; explicit let is needed for rebinding
+class.field.default.v2|accepted|js|required|Bare class fields have implicit val binding; explicit let is needed for rebinding
+class.field.default.v2|accepted|llvm|required|Bare class fields have implicit val binding; explicit let is needed for rebinding
+class.field.default.v2|accepted|net|required|Bare class fields have implicit val binding; explicit let is needed for rebinding
+class.field.default.v2|accepted|rs|required|Bare class fields have implicit val binding; explicit let is needed for rebinding
+class.field.default.v2|accepted|atto|deferred|Backend bootstrap or future specialized target; no current guest proof
+class.field.default.v2|accepted|realtime|deferred|Backend bootstrap or future specialized target; no current guest proof
+class.field.default.v2|accepted|wasm|optional|Wasm integration may inherit compiler coverage; not a second independent compiler
+class.field.default.v2|accepted|hdl|deferred|Synthesizable class subset not established; do not emulate dynamic classes
+trap.result.v1|normative|cranelift|required|trap preserves Result and catches ordinary throw only; must not silently return Option
+trap.result.v1|normative|forge|required|trap preserves Result and catches ordinary throw only; must not silently return Option
+trap.result.v1|normative|java|required|trap preserves Result and catches ordinary throw only; must not silently return Option
+trap.result.v1|normative|js|required|trap preserves Result and catches ordinary throw only; must not silently return Option
+trap.result.v1|normative|llvm|required|trap preserves Result and catches ordinary throw only; must not silently return Option
+trap.result.v1|normative|net|required|trap preserves Result and catches ordinary throw only; must not silently return Option
+trap.result.v1|normative|rs|required|trap preserves Result and catches ordinary throw only; must not silently return Option
+trap.result.v1|normative|atto|deferred|Target bootstrap and admission pending
+trap.result.v1|normative|realtime|deferred|Target bootstrap and admission pending
+trap.result.v1|normative|wasm|optional|Wasm integration needs distinct executed guest evidence not duplicate compiler proof
+trap.result.v1|normative|hdl|deferred|Hardware capability admission must be ratified before requiring this feature
+ownership.copy_deep.v1|proposal|atto|deferred|Full copy!! object graph semantics remain a proposal needing target-specific evidence
+ownership.copy_deep.v1|proposal|cranelift|deferred|Full copy!! object graph semantics remain a proposal needing target-specific evidence
+ownership.copy_deep.v1|proposal|forge|deferred|Full copy!! object graph semantics remain a proposal needing target-specific evidence
+ownership.copy_deep.v1|proposal|hdl|deferred|Full copy!! object graph semantics remain a proposal needing target-specific evidence
+ownership.copy_deep.v1|proposal|java|deferred|Full copy!! object graph semantics remain a proposal needing target-specific evidence
+ownership.copy_deep.v1|proposal|js|deferred|Full copy!! object graph semantics remain a proposal needing target-specific evidence
+ownership.copy_deep.v1|proposal|llvm|deferred|Full copy!! object graph semantics remain a proposal needing target-specific evidence
+ownership.copy_deep.v1|proposal|net|deferred|Full copy!! object graph semantics remain a proposal needing target-specific evidence
+ownership.copy_deep.v1|proposal|realtime|deferred|Full copy!! object graph semantics remain a proposal needing target-specific evidence
+ownership.copy_deep.v1|proposal|rs|deferred|Full copy!! object graph semantics remain a proposal needing target-specific evidence
+ownership.copy_deep.v1|proposal|wasm|deferred|Full copy!! object graph semantics remain a proposal needing target-specific evidence
+runtime.dynamic_allocation.v1|proposal|hdl|forbidden|Unbounded dynamic heap allocation is outside the synthesizable hardware subset
