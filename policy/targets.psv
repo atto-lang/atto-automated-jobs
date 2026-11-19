@@ -1,0 +1,12 @@
+# backend|repo|kind
+atto|atto-lang/atto-source.atto|bootstrap
+cranelift|atto-lang/atto-source.cranelift|native_compiler
+forge|atto-lang/atto-source.forge|native_compiler
+hdl|atto-lang/atto-source.hdl|hardware_subset
+java|atto-lang/atto-source.java|jvm_native_aot
+js|atto-lang/atto-source.js|javascript
+llvm|atto-lang/atto-source.llvm|native_compiler
+net|atto-lang/atto-source.net|native_aot
+realtime|atto-lang/atto-source.realtime|planned_backend
+rs|atto-lang/atto-source.rs|rust_wasm_compiler
+wasm|atto-lang/atto-source.wasm|wasm_integration
