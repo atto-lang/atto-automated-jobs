@@ -1,0 +1,79 @@
+name: Nightly AttoLang parity
+on:
+  schedule:
+    - cron: '17 8 * * *'
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'policy/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/nightly-parity.yml'
+
+concurrency:
+  group: nightly-atto-parity-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Check policy and run Rust unit tests
+        run: |
+          cargo test --locked
+          cargo run --locked -- validate
+          cargo run --locked -- plan
+
+  reconcile:
+    needs: validate
+    if: github.event_name != 'pull_request' && vars.ATTO_PARITY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Create narrowly scoped GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.ATTO_PARITY_APP_ID }}
+          private-key: ${{ secrets.ATTO_PARITY_APP_PRIVATE_KEY }}
+          owner: atto-lang
+          repositories: |
+            atto-source.atto
+            atto-source.cranelift
+            atto-source.forge
+            atto-source.hdl
+            atto-source.java
+            atto-source.js
+            atto-source.llvm
+            atto-source.net
+            atto-source.realtime
+            atto-source.rs
+            atto-source.wasm
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Configure ephemeral authenticated Git
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: gh auth setup-git
+      - name: Open/update review-only parity draft PRs
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          ATTO_PARITY_MAX_PRS: '5'
+        run: cargo run --locked --release -- reconcile
+      - name: Upload read-only reconciliation reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: atto-parity-reports
+          path: target/parity-reports/
+          if-no-files-found: ignore
+          retention-days: 14
