@@ -32,6 +32,7 @@ function fixture() {
       the1mills: { id: config.humans.the1mills, login: 'the1mills' },
       ORESoftware: { id: config.humans.ORESoftware, login: 'ORESoftware' },
     },
+    permissions: { the1mills: 'admin', ORESoftware: 'admin' },
     reviews: [
       review(1, config.humans.the1mills),
       review(2, config.humans.ORESoftware),
@@ -182,4 +183,17 @@ test('a later AI CHANGES_REQUESTED overrides earlier AI APPROVED', () => {
   const f = fixture();
   f.reviews.push(review(12, config.aiReviewers.anthropic, 'CHANGES_REQUESTED', head, 'Bot'));
   denied(f, 'anthropic: no formal APPROVED');
+});
+
+test('human read-only collaborators do not satisfy eligible approval requirements', () => {
+  const f = fixture(); f.permissions.ORESoftware = 'read';
+  denied(f, 'eligible write-level');
+});
+test('missing collaborator permission proof fails closed', () => {
+  const f = fixture(); delete f.permissions.the1mills;
+  denied(f, 'eligible write-level');
+});
+test('unknown GitHub review state fails closed rather than silently ignored', () => {
+  const f = fixture(); f.reviews.push(review(40, 777888, 'FUTURE_UNDOCUMENTED'));
+  denied(f, 'unknown GitHub review state');
 });
