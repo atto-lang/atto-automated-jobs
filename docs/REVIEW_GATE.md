@@ -19,7 +19,7 @@ No four-slot check can override actual eligible human reviews, unresolved CHANGE
 
 `scripts/review-gate.cjs` is a standalone no-dependency Node.js validator for one private `atto-lang/atto-source.*` PR. It reads the PR, repository ID, pinned named humans, all paginated GitHub reviews, exact-head check runs and current PR metadata again. It rejects missing/invalid IDs, unavailable write-level GitHub collaborator permissions, unknown review states, duplicate bot reviewers/providers, spoofed App identity, missing/stale/dismissed AI or human formal approvals, change requests, author self-approval, stale/failed model checks, draft status and changed HEAD. It never checks out, executes, pushes or merges PR source.
 
-Offline tests: `node --test test/*.test.cjs` (38 positive/negative cases, including mock API pagination and PR race checks). Rust parity tests remain `cargo test --locked`. Both are included in the existing nightly workflow's validation job.
+Offline tests: `node --test test/*.test.cjs` (40 positive/negative cases, including mock API pagination and PR race checks). Rust parity tests remain `cargo test --locked`. Both are included in the existing nightly workflow's validation job.
 
 Once a repository owner separately verifies the immutable IDs and configures a **scoped read-only token**, run:
 
