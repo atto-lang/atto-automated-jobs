@@ -17,9 +17,9 @@ No four-slot check can override actual eligible human reviews, unresolved CHANGE
 
 ## Read-only verifier and test matrix
 
-`scripts/review-gate.cjs` is a standalone no-dependency Node.js validator for one private `atto-lang/atto-source.*` PR. It reads the PR, repository ID, pinned named humans, all paginated GitHub reviews, exact-head check runs and current PR metadata again. It rejects missing/invalid IDs, duplicate bot reviewers/providers, spoofed App identity, missing/stale/dismissed AI or human formal approvals, change requests, author self-approval, stale/failed model checks, draft status and changed HEAD. It never checks out, executes, pushes or merges PR source.
+`scripts/review-gate.cjs` is a standalone no-dependency Node.js validator for one private `atto-lang/atto-source.*` PR. It reads the PR, repository ID, pinned named humans, all paginated GitHub reviews, exact-head check runs and current PR metadata again. It rejects missing/invalid IDs, unavailable write-level GitHub collaborator permissions, unknown review states, duplicate bot reviewers/providers, spoofed App identity, missing/stale/dismissed AI or human formal approvals, change requests, author self-approval, stale/failed model checks, draft status and changed HEAD. It never checks out, executes, pushes or merges PR source.
 
-Offline tests: `node --test test/*.test.cjs`. Rust parity tests remain `cargo test --locked`. Both are included in the existing nightly workflow's validation job.
+Offline tests: `node --test test/*.test.cjs` (38 positive/negative cases, including mock API pagination and PR race checks). Rust parity tests remain `cargo test --locked`. Both are included in the existing nightly workflow's validation job.
 
 Once a repository owner separately verifies the immutable IDs and configures a **scoped read-only token**, run:
 
@@ -34,7 +34,7 @@ GH_TOKEN='<read-only-token>' \
 node scripts/review-gate.cjs atto-lang/atto-source.rs 123
 ~~~
 
-An unset identity or missing proof fails closed. No token, key or user-source content is logged.
+An unset identity, unverified write-level repository permission, or missing proof fails closed. No token, key or user-source content is logged.
 
 ## Required GitHub installation — not yet deployed
 
@@ -54,3 +54,10 @@ Generated nightly parity PRs remain drafts pending authorization; this is **not*
 Only investigate cross-org private mirror fallback after evidence of genuine Actions capacity/billing exhaustion; 403 API rate limits and zero-step failures alone do not prove this. First verify **explicit authorized privacy scope** for the exact private source and receiving repository, its collaborators and retention. Source GITHUB_TOKEN cannot checkout a separate organization's private repo. Copy exact Git tree, preserving blob SHAs, paths, modes, symlinks, binary files and Gitlinks; independently compare complete tree SHA, identify missing LFS/submodule dependencies, and fail closed on mismatches. Never copy credentials or secrets. Capture full real build/test steps and receipts on a destination-local private branch and safely clean up. An alternate-org success **never satisfies source-repo required checks or protected reviews**.
 
 This gate's deterministic fixtures contain no private compiler source and should be exercised without transferring compiler repositories whenever feasible.
+
+## Verified deployment blockers (November 18, 2026)
+
+- Draft controller PR: https://github.com/atto-lang/atto-automated-jobs/pull/3 ; private source repo workflow #44446929858 had a failed validation job with **zero executed steps**. This is not evidence of a failed Node or Rust test and does **not** by itself prove exhausted Actions minutes.
+- Repository rulesets GET on both private controller and private `atto-source.rs` returned 403 with GitHub message `Upgrade to GitHub Pro or make this repository public to enable this feature.` Branch-protection GET returned 403 `Resource not accessible by integration`. Therefore enforcement configuration could not be verified or deployed through the current connection.
+- Unknown / not yet provisioned: ORESoftware pinned human ID and the distinct trusted AI review bot user IDs and App IDs. The verifier intentionally blocks without them.
+- No private Git tree was copied across organizations: verified Actions billing exhaustion and approved private destination scope were not established. Exact-source alternate-org CI is **not claimed**.
