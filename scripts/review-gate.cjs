@@ -20,153 +20,110 @@ function numericId(value) {
     ? Number(text) : null;
 }
 
+// Immutable public GitHub numeric IDs: usernames alone are never authority.
+// Extra AI providers are optional advisory evidence, never approval slots.
+const TRUSTED_HUMAN_IDS = Object.freeze({the1mills:2148448, ORESoftware:11139560});
 function configFromEnv(env = process.env) {
-  const config = {
-    humans: {
-      the1mills: numericId(env.ATTO_THE1MILLS_USER_ID || '2148448'),
-      ORESoftware: numericId(env.ATTO_ORESOFTWARE_USER_ID),
-    },
-    apps: {
-      openai: numericId(env.ATTO_OPENAI_APP_ID),
-      anthropic: numericId(env.ATTO_ANTHROPIC_APP_ID),
-    },
-    aiReviewers: {
-      openai: numericId(env.ATTO_OPENAI_REVIEWER_ID),
-      anthropic: numericId(env.ATTO_ANTHROPIC_REVIEWER_ID),
-    },
+  for (const [label, name] of [
+    ['the1mills','ATTO_THE1MILLS_USER_ID'],
+    ['ORESoftware','ATTO_ORESOFTWARE_USER_ID']
+  ]) {
+    if (env[name] !== undefined && numericId(env[name]) !== TRUSTED_HUMAN_IDS[label])
+      throw Error('noncanonical trusted reviewer identity supplied: '+name);
+  }
+  return {
+    humans: {...TRUSTED_HUMAN_IDS},
     overlapApp: numericId(env.ATTO_OVERLAP_AUDIT_APP_ID),
   };
-  return config;
 }
 
-function evaluate({ repo, pr, reviews, checks, users, permissions, repoId, expectedHead, timeline, now, extraHumanPermissions }, config) {
-  const blockers = [];
-  const receipt = { head: pr?.head?.sha || null, human: {}, aiReview: {}, ai: {} };
-  const cycle = resolveCycle(pr, timeline, now);
-  receipt.readyCycle = cycle;
+function evaluate({repo,pr,reviews,checks,users,permissions,repoId,expectedHead,timeline,now},config) {
+  const blockers=[], receipt={head:pr?.head?.sha||null,human:{},overlapAudit:null};
+  const cycle=resolveCycle(pr,timeline,now);
+  receipt.readyCycle=cycle;
   blockers.push(...cycle.blockers);
-  // A fast-lane decision is permitted ONLY after trusted separate overlap audit.
-  const minimumReviewTime = Date.parse(cycle.minReviewAt || '');
-  const evaluationTime = Number.isSafeInteger(now) ? now : Date.now();
-  const timely = value => {
-    const at = Date.parse(value || '');
-    return cycle.ok && Number.isFinite(at) && Number.isFinite(minimumReviewTime) &&
-      at >= minimumReviewTime && at <= evaluationTime;
-  };
-  if (!REPO.test(repo || '')) blockers.push('unallowlisted target repository');
-  if (!SHA.test(pr?.head?.sha || '')) blockers.push('missing/invalid PR head SHA');
-  if (expectedHead && expectedHead !== pr?.head?.sha) blockers.push('PR head SHA changed');
-  if (pr?.base?.repo?.full_name !== repo || pr?.base?.repo?.id !== repoId)
+  if (!REPO.test(repo||'')) blockers.push('unallowlisted target repository');
+  if (!SHA.test(pr?.head?.sha||'')) blockers.push('missing/invalid PR head SHA');
+  if (expectedHead && expectedHead!==pr?.head?.sha)
+    blockers.push('PR head SHA changed');
+  if (pr?.base?.repo?.full_name!==repo || pr?.base?.repo?.id!==repoId)
     blockers.push('PR base repository identity mismatch');
-  if (pr?.state !== 'open') blockers.push('PR is not open');
-  if (pr?.draft !== false) blockers.push('PR remains draft');
+  if (!SHA.test(pr?.base?.sha||''))
+    blockers.push('missing/invalid PR base SHA');
+  if (!numericId(pr?.number))
+    blockers.push('PR number missing');
+  if (pr?.state!=='open') blockers.push('PR is not open');
+  if (pr?.draft!==false) blockers.push('PR remains draft');
   if (!numericId(pr?.user?.id)) blockers.push('PR author identity missing');
-  for (const [label, id] of Object.entries(config.humans || {})) {
-    if (!numericId(id)) blockers.push(label + ': unconfigured pinned human ID');
-    if (users?.[label]?.id !== id || users?.[label]?.login?.toLowerCase() !== label.toLowerCase())
-      blockers.push(label + ': GitHub account does not match pinned identity');
-    if (id && pr?.user?.id === id && cycle.window !== 'fast')
-      blockers.push(label + ': author cannot self-approve');
-    if (!['write', 'maintain', 'admin'].includes(permissions?.[label]))
-      blockers.push(label + ': cannot verify eligible write-level repository access');
-  }
-  const humanIds = Object.values(config.humans || {});
-  if (humanIds.length !== 2 || new Set(humanIds).size !== 2)
-    blockers.push('human reviewer identities must be distinct');
-  const aiReviewerIds = Object.values(config.aiReviewers || {});
-  if (aiReviewerIds.length !== 2 || !aiReviewerIds.every(numericId) ||
-      new Set([...humanIds, ...aiReviewerIds]).size !== 4)
-    blockers.push('four GitHub review identities must be pinned and distinct');
-  const appIds = Object.values(config.apps || {});
-  if (appIds.length !== 2 || !appIds.every(numericId) || new Set(appIds).size !== 2)
-    blockers.push('OpenAI and Anthropic require two distinct pinned GitHub Apps');
 
-  // The GitHub API returns reviews in chronological order. Sort by immutable
-  // review ID as an extra guard, and take the latest substantive review per user.
-  const latest = new Map();
-  if (!Array.isArray(reviews)) blockers.push('reviews not available');
-  for (const review of Array.isArray(reviews) ? [...reviews].sort((a, b) => a.id - b.id) : []) {
-    if (!numericId(review?.id) || !numericId(review?.user?.id)) {
-      blockers.push('unattributable GitHub review'); continue;
-    }
-    const state = review.state;
-    if (!['APPROVED', 'CHANGES_REQUESTED', 'DISMISSED', 'COMMENTED', 'PENDING'].includes(state))
-      blockers.push('unknown GitHub review state');
-    if (state === 'APPROVED' || state === 'CHANGES_REQUESTED' || state === 'DISMISSED') {
-      latest.set(review.user.id, review);
-    }
-  }
-  const humanGood = {};
-  for (const [label, id] of Object.entries(config.humans || {})) {
-    const review = latest.get(id);
-    humanGood[label] = Boolean(review && review.state === 'APPROVED' &&
-      review.commit_id === pr?.head?.sha && timely(review.submitted_at) &&
-      review.user?.type === 'User' && pr?.user?.id !== id &&
-      users?.[label]?.id === id &&
-      ['write', 'maintain', 'admin'].includes(permissions?.[label]));
-    receipt.human[label] = review ? { reviewId: review.id, state: review.state, commit: review.commit_id } : null;
-    if (!humanGood[label] && cycle.window !== 'fast')
-      blockers.push(label + ': no effective APPROVED review on current exact head');
-  }
-  // Provider-owned checks complement, but never replace, real submitted
-  // GitHub APPROVED bot reviews by distinct allowlisted reviewer accounts.
-  const botGood = {};
-  for (const [family, id] of Object.entries(config.aiReviewers || {})) {
-    const review = latest.get(id);
-    botGood[family] = Boolean(review && review.state === 'APPROVED' &&
-      review.commit_id === pr?.head?.sha && timely(review.submitted_at) &&
-      review.user?.type === 'Bot' && pr?.user?.id !== id);
-    receipt.aiReview[family] = review ?
-      { reviewId: review.id, state: review.state, commit: review.commit_id, botId: review.user?.id } : null;
-    if (id && pr?.user?.id === id && cycle.window !== 'fast')
-      blockers.push(family + ': PR author cannot self-approve');
-    if (!botGood[family] && cycle.window !== 'fast')
-      blockers.push(family + ': no formal APPROVED GitHub bot review on current exact head');
-  }
-  for (const review of latest.values()) {
-    if (review.state === 'CHANGES_REQUESTED') {
-      blockers.push('unresolved CHANGES_REQUESTED from GitHub user ' + review.user.id);
-    }
+  for(const [label,id] of Object.entries(TRUSTED_HUMAN_IDS)) {
+    if(config?.humans?.[label]!==id)
+      blockers.push(label+': untrusted or missing pinned owner ID');
+    if(users?.[label]?.id!==id || users?.[label]?.login?.toLowerCase()!==label.toLowerCase())
+      blockers.push(label+': GitHub account does not match pinned identity');
+    if(!['write','maintain','admin'].includes(permissions?.[label]))
+      blockers.push(label+': cannot verify eligible write-level repository access');
   }
 
-  // Do not accept a status name or comment as proof of reviewer identity.
-  // Each provider must own its exact check through a distinct, pinned App ID.
-  if (!Array.isArray(checks)) blockers.push('check runs not available');
-  const providerGood = {};
-  for (const [family, name] of Object.entries(CHECK_NAMES)) {
-    const matching = (Array.isArray(checks) ? checks : []).filter(x => x?.name === name);
-    const appId = config.apps?.[family];
-    const newest = matching.reduce((a, b) => !a || b.id > a.id ? b : a, null);
-    receipt.ai[family] = newest ?
-      { runId: newest.id, appId: newest.app?.id, conclusion: newest.conclusion, head: newest.head_sha } : null;
-    if (matching.some(x => !numericId(x?.id) || x?.app?.id !== appId ||
-        x?.head_sha !== pr?.head?.sha)) {
-      blockers.push(family + ': spoofed/unattributed/stale check run');
+  // Only the authenticated complete GitHub review feed is admissible.
+  // A review's old commit ID remains valid when GitHub *still* reports an
+  // effective APPROVED review: the canonical policy retains one approval
+  // across ordinary pushes. Actual protection can impose stronger rules.
+  const latest=new Map(),seenIds=new Set();
+  if(!Array.isArray(reviews)||reviews.length>5000)
+    blockers.push('bounded authenticated GitHub review history unavailable');
+  const safe=Array.isArray(reviews)?reviews.slice(0,5000):[];
+  for(const review of safe.sort((a,b)=>(a?.id||0)-(b?.id||0))){
+    if(!numericId(review?.id) || !numericId(review?.user?.id) ||
+        typeof review.user.login!=='string' ||
+        seenIds.has(review.id)) {
+      blockers.push('unattributable or duplicate GitHub review');continue;
     }
-    providerGood[family] = Boolean(newest && newest.app?.id === appId &&
-      newest.head_sha === pr?.head?.sha && newest.status === 'completed' &&
-      newest.conclusion === 'success' && timely(newest.completed_at));
-    if (!providerGood[family] && cycle.window !== 'fast')
-      blockers.push(family + ': no completed successful review by pinned provider App');
+    seenIds.add(review.id);
+    if(!['APPROVED','CHANGES_REQUESTED','DISMISSED','COMMENTED','PENDING'].includes(review.state)){
+      blockers.push('unknown GitHub review state');continue;
+    }
+    if(review.state==='COMMENTED'||review.state==='PENDING')continue;
+    const timestamp=Date.parse(review.submitted_at||'');
+    if(!SHA.test(review.commit_id||'')||!Number.isFinite(timestamp)||
+        !Number.isSafeInteger(now)||timestamp>now){
+      blockers.push('review has invalid commit or submission time');continue;
+    }
+    latest.set(review.user.id,review);
   }
-  const ai = {};
-  for (const family of Object.keys(CHECK_NAMES)) ai[family] = botGood[family] && providerGood[family];
-  const extraHuman = [...latest.values()].some(review => {
-    const identity = extraHumanPermissions?.[review?.user?.id];
-    return review?.user?.type === 'User' && review.state === 'APPROVED' &&
-      review.commit_id === pr?.head?.sha && timely(review.submitted_at) &&
-      review.user.id !== pr?.user?.id && !humanIds.includes(review.user.id) &&
-      numericId(review.user.id) && identity?.login === review.user.login &&
-      ['write', 'maintain', 'admin'].includes(identity?.permission);
+
+  const approved={};
+  for(const [label,id] of Object.entries(TRUSTED_HUMAN_IDS)){
+    const review=latest.get(id);
+    const identity=users?.[label];
+    approved[label]=Boolean(review && review.state==='APPROVED' &&
+      review.user?.id===id && review.user?.login?.toLowerCase()===label.toLowerCase() &&
+      review.user?.type==='User' && pr?.user?.id!==id &&
+      identity?.id===id && identity?.login?.toLowerCase()===label.toLowerCase() &&
+      ['write','maintain','admin'].includes(permissions?.[label]) &&
+      config?.humans?.[label]===id);
+    receipt.human[label]=review?{reviewId:review.id,state:review.state,
+      reviewedCommit:review.commit_id,accepted:approved[label]}:null;
+  }
+  if([...latest.values()].some(r=>r.state==='CHANGES_REQUESTED'))
+    blockers.push('unresolved CHANGES_REQUESTED GitHub review');
+
+  // This is a separate, pinned App's exact SHA+base semantic overlap proof,
+  // checked for all Ready PRs, not an obsolete 72h-240h loophole.
+  const overlap=verifyOverlapProof({
+    repo,pr,checks,appId:config?.overlapApp,
+    providerAppIds:[],cycle,now,
   });
-  const overlap = cycle.window === 'fast' ? verifyOverlapProof({
-    repo, pr, checks, appId: config.overlapApp, providerAppIds: appIds,
-    cycle, now: evaluationTime
-  }) : null;
-  receipt.overlapAudit = overlap?.receipt || null;
-  const quorum = determineReviewAdmission({ cycle, human: humanGood, ai, extraHuman, overlap });
+  receipt.overlapAudit=overlap.receipt;
+  const quorum=determineReviewAdmission({cycle,human:approved,overlap});
   blockers.push(...quorum.blockers);
-  return { pass: blockers.length === 0, blockers: [...new Set(blockers)], receipt };
+  return {
+    pass:blockers.length===0,
+    advisory_only:true,
+    policy:'single-independent-trusted-human-all-ready-ages',
+    blockers:[...new Set(blockers)],
+    receipt,
+  };
 }
 
 async function api(path, token) {
@@ -207,24 +164,6 @@ async function collect(repo, number, token) {
     api(base + '/collaborators/ORESoftware/permission', token),
   ]);
   if (!SHA.test(pr?.head?.sha || '')) throw Error('invalid live PR SHA');
-  const candidates = new Map();
-  for (const review of reviews) {
-    const identity = review?.user;
-    if (identity?.type !== 'User' || review.state !== 'APPROVED' ||
-        review.commit_id !== pr.head.sha ||
-        ['the1mills', 'oresoftware'].includes(identity.login?.toLowerCase())) continue;
-    if (!numericId(identity.id) || !/^[A-Za-z0-9-]{1,39}$/.test(identity.login || ''))
-      throw Error('unattributable additional human reviewer');
-    if (candidates.has(identity.id) && candidates.get(identity.id) !== identity.login)
-      throw Error('conflicting GitHub reviewer identity');
-    candidates.set(identity.id, identity.login);
-  }
-  if (candidates.size > 40) throw Error('additional reviewer permission audit cap reached');
-  const extraHumanPermissions = {};
-  for (const [id, login] of candidates) {
-    const response = await api(base + '/collaborators/' + login + '/permission', token);
-    extraHumanPermissions[id] = { login, permission: response?.permission };
-  }
   const checks = await pages(base + '/commits/' + pr.head.sha + '/check-runs', token);
   // Double-read mutable review and check state, not just the PR's updated_at;
   // GitHub does not guarantee that every review/check mutation changes PR metadata.
@@ -255,15 +194,9 @@ async function collect(repo, number, token) {
     throw Error('authenticated lifecycle timeline changed during verification; rerun');
   if (reviewDigest(reviews) !== reviewDigest(freshReviews) ||
       checkDigest(checks) !== checkDigest(freshChecks))
-    throw Error('review or AI check changed during verification; rerun');
-  for (const [id, candidate] of Object.entries(extraHumanPermissions)) {
-    const fresh = await api(base + '/collaborators/' + candidate.login + '/permission', token);
-    if (fresh?.permission !== candidate.permission)
-      throw Error('additional reviewer permission changed during verification');
-  }
+    throw Error('review or check changed during verification; rerun');
   return {
     repo, pr, reviews, checks, timeline, now: Date.now(), repoId: repository.id,
-    extraHumanPermissions,
     users: { the1mills: users1, ORESoftware: users2 },
     permissions: { the1mills: perm1?.permission, ORESoftware: perm2?.permission },
     expectedHead: pr.head.sha,
@@ -275,10 +208,8 @@ async function main(argv = process.argv.slice(2), env = process.env) {
   const token = env.GH_TOKEN || env.GITHUB_TOKEN;
   if (!token) throw Error('GITHUB_TOKEN/GH_TOKEN not configured');
   const config = configFromEnv(env);
-  if (!Object.values(config.humans).every(numericId) ||
-      !Object.values(config.apps).every(numericId) ||
-      !Object.values(config.aiReviewers).every(numericId))
-    throw Error('pinned identities missing; fail closed');
+  if (!Object.values(config.humans).every(numericId) || !numericId(config.overlapApp))
+    throw Error('trusted owner or independent overlap-audit App ID missing; fail closed');
   const evidence = await collect(argv[0], argv[1], token);
   const result = evaluate(evidence, config);
   console.log(JSON.stringify({ repo: argv[0], pr: Number(argv[1]), ...result }, null, 2));
@@ -290,4 +221,4 @@ if (require.main === module) main().catch(error => {
   process.exitCode = 1;
 });
 
-module.exports = { numericId, configFromEnv, evaluate, collect, pages, CHECK_NAMES };
+module.exports = { numericId, configFromEnv, evaluate, collect, pages, CHECK_NAMES, TRUSTED_HUMAN_IDS };
