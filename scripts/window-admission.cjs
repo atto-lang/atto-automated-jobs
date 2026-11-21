@@ -11,8 +11,8 @@ function determineReviewAdmission({ cycle, human, ai, extraHuman, overlap }) {
     for (const family of ['openai', 'anthropic'])
       if (ai?.[family] !== true) blockers.push(family + ': no independently verified in-cycle exact-head approval');
   } else if (cycle?.window === 'fast') {
-    const anyHuman = extraHuman === true || Object.values(human || {}).some(Boolean);
-    const anyAi = Object.values(ai || {}).some(Boolean);
+    const anyHuman = extraHuman === true || Object.values(human || {}).some(x => x === true);
+    const anyAi = Object.values(ai || {}).some(x => x === true);
     if (!anyHuman && !anyAi)
       blockers.push('fast lane requires one independently eligible exact-head approval');
     if (overlap?.pass !== true) blockers.push('fast-lane competing-PR audit not independently verified');

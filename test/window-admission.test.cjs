@@ -14,3 +14,4 @@ test('fast rejects zero approvals',()=>{const x=state('fast');x.human.the1mills=
 test('fast rejects missing overlap attestation',()=>{const x=state('fast');x.overlap={pass:false,blockers:['no audit']};assert.equal(determineReviewAdmission(x).pass,false)});
 test('draft rejects even four approvals and overlap',()=>{const x=state('draft');x.cycle.state='draft';assert.equal(determineReviewAdmission(x).pass,false)});
 test('invalid cycle rejects even four approvals',()=>{const x=state();x.cycle.ok=false;assert.equal(determineReviewAdmission(x).pass,false)});
+test('truthy strings and integers never qualify as an approval',()=>{const x=state('fast');x.human.the1mills='APPROVED';x.human.ORESoftware=1;x.ai.openai=1;x.ai.anthropic='yes';assert.equal(determineReviewAdmission(x).pass,false)});
