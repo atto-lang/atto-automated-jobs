@@ -74,7 +74,7 @@ test('third human approval never replaces the named trusted owners',()=>{
   denied(e,'one independent');
 });
 test('requested and COMMENTED reviews are not APPROVED',()=>{
-  const e=fixture();e.reviews=[{...review(1,humans.ORESoftware,state='COMMENTED')}];
+  const e=fixture();e.reviews=[{...review(1,humans.ORESoftware,'COMMENTED')}];
   denied(e,'one independent');
 });
 test('revoked or dismissed latest trusted approval fails closed',()=>{
@@ -140,7 +140,7 @@ test('future submitted review or malformed commit cannot count',()=>{
   denied(f,'submission time');
 });
 test('draft, hold and closed PRs remain blocked',()=>{
-  const draft=fixture();draft.pr.draft=true;denied(draft,'Draft');
+  const draft=fixture();draft.pr.draft=true;denied(draft,'draft');
   const held=fixture();held.pr.labels=[{name:'keep-as-draft'}];denied(held,'hold');
   const closed=fixture();closed.pr.state='closed';denied(closed,'not open');
 });
@@ -148,7 +148,7 @@ test('wrong exact HEAD/base/repo identity blocks',()=>{
   const moving=fixture();moving.expectedHead='c'.repeat(40);
   denied(moving,'changed');
   const baseId=fixture();baseId.pr.base.sha='c'.repeat(40);
-  denied(baseId,'overlap');
+  denied(baseId,'competing-PR audit');
   const baseRepo=fixture();baseRepo.pr.base.repo.id=7;
   denied(baseRepo,'identity mismatch');
   const invalid=fixture();invalid.repo='other/atto-source.rs';
