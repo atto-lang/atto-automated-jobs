@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { evaluate, numericId, configFromEnv, collect, pages } = require('../scripts/review-gate.cjs');
 
 const head = 'a'.repeat(40);
+const snapshotNow = Date.parse('2026-11-18T12:00:00Z');
 const repo = 'atto-lang/atto-source.rs';
 const config = {
   humans: { the1mills: 2148448, ORESoftware: 1234567 },
@@ -16,15 +17,17 @@ const review = (id, userId, state = 'APPROVED', sha = head, type = 'User') => ({
 });
 const check = (id, name, appId, conclusion = 'success', sha = head) => ({
   id, name, app: { id: appId }, head_sha: sha,
-  status: 'completed', conclusion,
+  status: 'completed', conclusion, completed_at: '2026-11-18T00:30:00Z',
 });
 function fixture() {
   return {
     repo,
     repoId: 42,
     expectedHead: head,
+    now: snapshotNow,
+    timeline: [],
     pr: {
-      state: 'open', draft: false, head: { sha: head },
+      state: 'open', draft: false, created_at: '2026-11-17T12:00:00Z', labels: [], head: { sha: head },
       base: { repo: { full_name: repo, id: 42 } },
       user: { id: 5555 },
     },
@@ -205,6 +208,7 @@ test('collector walks authenticated PR, reviews, provider checks and permission 
     [prefix + '/pulls/77']: f.pr,
     [prefix]: { id: 42 },
     [prefix + '/pulls/77/reviews?per_page=100&page=1']: f.reviews,
+    [prefix + '/issues/77/timeline?per_page=100&page=1']: f.timeline,
     [prefix + '/commits/' + head + '/check-runs?per_page=100&page=1']: { check_runs: f.checks },
     '/users/the1mills': f.users.the1mills,
     '/users/ORESoftware': f.users.ORESoftware,
@@ -238,6 +242,7 @@ test('collector detects PR changing during evidence collection', async () => {
       prReads++;
       return { ok: true, json: async () => ({ ...f.pr, updated_at: prReads === 1 ? 'v1' : 'v2' }) };
     }
+    if (path.endsWith('/timeline?per_page=100&page=1')) return { ok: true, json: async () => f.timeline };
     if (path.endsWith('/reviews?per_page=100&page=1')) return { ok: true, json: async () => f.reviews };
     if (path.endsWith('/check-runs?per_page=100&page=1'))
       return { ok: true, json: async () => ({ check_runs: f.checks }) };
@@ -288,6 +293,7 @@ test('collector rejects review mutations that do not update PR metadata', async 
   global.fetch = async url => {
     const path = new URL(url).pathname + new URL(url).search;
     if (path.endsWith('/pulls/81')) return { ok: true, json: async () => f.pr };
+    if (path.endsWith('/timeline?per_page=100&page=1')) return { ok: true, json: async () => f.timeline };
     if (path.endsWith('/reviews?per_page=100&page=1')) {
       reviewReads++;
       const rows = reviewReads === 1 ? f.reviews :
@@ -317,6 +323,7 @@ test('collector rejects AI check conclusion changing mid-read', async () => {
   global.fetch = async url => {
     const path = new URL(url).pathname + new URL(url).search;
     if (path.endsWith('/pulls/82')) return { ok: true, json: async () => f.pr };
+    if (path.endsWith('/timeline?per_page=100&page=1')) return { ok: true, json: async () => f.timeline };
     if (path.endsWith('/reviews?per_page=100&page=1'))
       return { ok: true, json: async () => f.reviews };
     if (path.endsWith('/check-runs?per_page=100&page=1')) {
@@ -338,4 +345,28 @@ test('collector rejects AI check conclusion changing mid-read', async () => {
   } finally {
     global.fetch = original;
   }
+});
+
+test('Ready cycle reset invalidates same-SHA earlier approvals', () => {
+  const f = fixture();
+  f.timeline = [{ id: 19, event: 'ready_for_review', created_at: '2026-11-18T06:00:00Z', actor: { id: 2148448 } }];
+  const x = verdict(f);
+  assert.equal(x.pass, false);
+  assert.ok(x.blockers.some(z => z.includes('exact head')), x.blockers.join('; '));
+});
+test('ten-day renewal rejects old current-SHA four-party approvals', () => {
+  const f = fixture();
+  f.now = Date.parse('2026-11-28T12:00:00Z');
+  const x = verdict(f);
+  assert.equal(x.receipt.readyCycle.window, 'renewal');
+  assert.equal(x.pass, false);
+});
+test('fast lane is blocked until an authenticated overlap audit is integrated', () => {
+  const f = fixture();
+  f.now = Date.parse('2026-11-21T12:00:00Z');
+  denied(f, 'fast-lane competing-PR audit');
+});
+test('hold labels fail closed even with all four fresh approvals', () => {
+  const f = fixture(); f.pr.labels = [{ name: 'KEEP-AS-DRAFT' }];
+  denied(f, 'hold label');
 });

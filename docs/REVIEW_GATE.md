@@ -61,3 +61,9 @@ This gate's deterministic fixtures contain no private compiler source and should
 - Repository rulesets GET on both private controller and private `atto-source.rs` returned 403 with GitHub message `Upgrade to GitHub Pro or make this repository public to enable this feature.` Branch-protection GET returned 403 `Resource not accessible by integration`. Therefore enforcement configuration could not be verified or deployed through the current connection.
 - Unknown / not yet provisioned: ORESoftware pinned human ID and the distinct trusted AI review bot user IDs and App IDs. The verifier intentionally blocks without them.
 - No private Git tree was copied across organizations: verified Actions billing exhaustion and approved private destination scope were not established. Exact-source alternate-org CI is **not claimed**.
+
+## 2026-11-21 Ready-cycle hardening (draft; not enforcement)
+
+The read-only verifier now fetches the **complete GitHub lifecycle timeline twice**, validates event IDs/actors/order, PR `created_at`, current Draft flag and current hold labels, and records the current Ready/Draft cycle start, event ID, exact 72h/240h window and post-240h review cutoff. This rejects stale same-SHA approvals from earlier cycles and old ten-day approvals. Provider checks must also complete inside the applicable cycle/window.
+
+**Important:** The verifier is still NOT a production age-window merger. In particular, its four-review predicate remains conservative: the **72–240-hour fast lane deliberately fails closed** until a trusted, exhaustive competing-PR integration audit is connected. It cannot accept a PR body statement or unchecked `overlap=true` flag. Draft promotion, native required checks and actual GitHub rulesets still require independent deployment. Local synthetic tests and alternate-org runs are not source-required-check substitutes.

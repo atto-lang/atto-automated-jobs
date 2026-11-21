@@ -4,6 +4,7 @@
 // Read-only independent-review admission gate. No PR-head code is executed.
 // A PASS is supplemental evidence; protected source-repository checks and
 // eligible GitHub approvals remain mandatory.
+const { resolveCycle } = require('./ready-cycle.cjs');
 const SHA = /^[0-9a-f]{40}$/i;
 const REPO = /^atto-lang\/atto-source\.[a-z][a-z0-9-]*$/;
 const CHECK_NAMES = Object.freeze({
@@ -35,9 +36,22 @@ function configFromEnv(env = process.env) {
   return config;
 }
 
-function evaluate({ repo, pr, reviews, checks, users, permissions, repoId, expectedHead }, config) {
+function evaluate({ repo, pr, reviews, checks, users, permissions, repoId, expectedHead, timeline, now }, config) {
   const blockers = [];
   const receipt = { head: pr?.head?.sha || null, human: {}, aiReview: {}, ai: {} };
+  const cycle = resolveCycle(pr, timeline, now);
+  receipt.readyCycle = cycle;
+  blockers.push(...cycle.blockers);
+  // Safe interim state: the overlap-audit integration is not a trusted source yet.
+  // Never present four-slot proof as a fast-lane authorization.
+  if (cycle.window === 'fast') blockers.push('fast-lane competing-PR audit not independently verified');
+  const minimumReviewTime = Date.parse(cycle.minReviewAt || '');
+  const evaluationTime = Number.isSafeInteger(now) ? now : Date.now();
+  const timely = value => {
+    const at = Date.parse(value || '');
+    return cycle.ok && Number.isFinite(at) && Number.isFinite(minimumReviewTime) &&
+      at >= minimumReviewTime && at <= evaluationTime;
+  };
   if (!REPO.test(repo || '')) blockers.push('unallowlisted target repository');
   if (!SHA.test(pr?.head?.sha || '')) blockers.push('missing/invalid PR head SHA');
   if (expectedHead && expectedHead !== pr?.head?.sha) blockers.push('PR head SHA changed');
@@ -84,7 +98,7 @@ function evaluate({ repo, pr, reviews, checks, users, permissions, repoId, expec
     const review = latest.get(id);
     receipt.human[label] = review ? { reviewId: review.id, state: review.state, commit: review.commit_id } : null;
     if (!review || review.state !== 'APPROVED' || review.commit_id !== pr?.head?.sha ||
-        !review.submitted_at || review.user?.type !== 'User') {
+        !timely(review.submitted_at) || review.user?.type !== 'User') {
       blockers.push(label + ': no effective APPROVED review on current exact head');
     }
   }
@@ -96,7 +110,7 @@ function evaluate({ repo, pr, reviews, checks, users, permissions, repoId, expec
       { reviewId: review.id, state: review.state, commit: review.commit_id, botId: review.user?.id } : null;
     if (id && pr?.user?.id === id) blockers.push(family + ': PR author cannot self-approve');
     if (!review || review.state !== 'APPROVED' || review.commit_id !== pr?.head?.sha ||
-        !review.submitted_at || review.user?.type !== 'Bot') {
+        !timely(review.submitted_at) || review.user?.type !== 'Bot') {
       blockers.push(family + ': no formal APPROVED GitHub bot review on current exact head');
     }
   }
@@ -120,7 +134,7 @@ function evaluate({ repo, pr, reviews, checks, users, permissions, repoId, expec
       blockers.push(family + ': spoofed/unattributed/stale check run');
     }
     if (!newest || newest.app?.id !== appId || newest.head_sha !== pr?.head?.sha ||
-        newest.status !== 'completed' || newest.conclusion !== 'success') {
+        newest.status !== 'completed' || newest.conclusion !== 'success' || !timely(newest.completed_at)) {
       blockers.push(family + ': no completed successful review by pinned provider App');
     }
   }
@@ -155,10 +169,11 @@ async function collect(repo, number, token) {
   if (!REPO.test(repo) || !/^[1-9][0-9]*$/.test(String(number)))
     throw Error('unallowlisted repo or invalid PR number');
   const base = '/repos/' + repo;
-  const [pr, repository, reviews, users1, users2, perm1, perm2] = await Promise.all([
+  const [pr, repository, reviews, timeline, users1, users2, perm1, perm2] = await Promise.all([
     api(base + '/pulls/' + number, token),
     api(base, token),
     pages(base + '/pulls/' + number + '/reviews', token),
+    pages(base + '/issues/' + number + '/timeline', token),
     api('/users/the1mills', token), api('/users/ORESoftware', token),
     api(base + '/collaborators/the1mills/permission', token),
     api(base + '/collaborators/ORESoftware/permission', token),
@@ -167,13 +182,16 @@ async function collect(repo, number, token) {
   const checks = await pages(base + '/commits/' + pr.head.sha + '/check-runs', token);
   // Double-read mutable review and check state, not just the PR's updated_at;
   // GitHub does not guarantee that every review/check mutation changes PR metadata.
-  const [latest, freshReviews, freshChecks] = await Promise.all([
+  const [latest, freshReviews, freshTimeline, freshChecks] = await Promise.all([
     api(base + '/pulls/' + number, token),
     pages(base + '/pulls/' + number + '/reviews', token),
+    pages(base + '/issues/' + number + '/timeline', token),
     pages(base + '/commits/' + pr.head.sha + '/check-runs', token),
   ]);
   if (latest.head?.sha !== pr.head.sha || latest.updated_at !== pr.updated_at ||
-      latest.state !== pr.state || latest.draft !== pr.draft)
+      latest.state !== pr.state || latest.draft !== pr.draft ||
+      JSON.stringify(latest.labels?.map(x => x.name).sort()) !==
+        JSON.stringify(pr.labels?.map(x => x.name).sort()))
     throw Error('PR changed during verification; rerun on latest head');
   const reviewDigest = values => JSON.stringify(values.map(x => ({
     id: x?.id, user: x?.user?.id, state: x?.state,
@@ -183,11 +201,16 @@ async function collect(repo, number, token) {
     id: x?.id, name: x?.name, app: x?.app?.id, head: x?.head_sha,
     status: x?.status, conclusion: x?.conclusion,
   })).sort((a, b) => a.id - b.id));
+  const timelineDigest = values => JSON.stringify(values.map(x => ({
+    id: x?.id, event: x?.event, at: x?.created_at, actor: x?.actor?.id
+  })));
+  if (timelineDigest(timeline) !== timelineDigest(freshTimeline))
+    throw Error('authenticated lifecycle timeline changed during verification; rerun');
   if (reviewDigest(reviews) !== reviewDigest(freshReviews) ||
       checkDigest(checks) !== checkDigest(freshChecks))
     throw Error('review or AI check changed during verification; rerun');
   return {
-    repo, pr, reviews, checks, repoId: repository.id,
+    repo, pr, reviews, checks, timeline, now: Date.now(), repoId: repository.id,
     users: { the1mills: users1, ORESoftware: users2 },
     permissions: { the1mills: perm1?.permission, ORESoftware: perm2?.permission },
     expectedHead: pr.head.sha,
