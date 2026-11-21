@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const { verifyOverlapProof } = require('../scripts/overlap-proof.cjs');
 const repo = 'atto-lang/atto-source.rs';
 const sha = 'a'.repeat(40), base = 'b'.repeat(40), now = Date.parse('2026-11-20T12:00:00Z');
-const pr = { number: 42, head: { sha }, base: { sha: base } };
+const pr = { number: 42, head: { sha }, base: { sha: base }, created_at:'2026-11-15T12:00:00Z' };
 const cycle = { ok: true, state: 'ready', window: 'fast', cycleStart: '2026-11-17T12:00:00Z' };
 const manifest = () => ({schema:'atto.overlap-audit.v1',repo,pr:42,head:sha,base,scan_complete:true,unresolved:0,scope:['ready-and-draft-prs','related-repositories','legacy-migration-map','changed-apis-and-symbols'],candidates:[]});
 const check = () => ({id:7,name:'atto-review/overlap-audit',app:{id:777},head_sha:sha,external_id:'atto-overlap:v1:' + repo + ':42:' + base + ':' + sha,status:'completed',conclusion:'success',completed_at:'2026-11-19T12:00:00Z',output:{summary:JSON.stringify(manifest())}});
@@ -26,4 +26,17 @@ test('incomplete scan scope rejected',()=>{const x=check();x.output.summary=JSON
 test('unresolved competing PR rejected',()=>{const x=check();x.output.summary=JSON.stringify({...manifest(),unresolved:1});blocked({checks:[x]},'manifest');});
 test('candidate requires immutable head and semantic disposition',()=>{const x=check();x.output.summary=JSON.stringify({...manifest(),candidates:[{url:'https://github.com/atto-lang/atto-source.rs/pull/3',head:sha,disposition:'independent'}]});blocked({checks:[x]},'manifest');});
 test('well-dispositioned competitor accepted',()=>{const x=check();x.output.summary=JSON.stringify({...manifest(),candidates:[{url:'https://github.com/atto-lang/atto-source.rs/pull/3',head:sha,disposition:'independent',rationale:'Different runtime ABI, no changed APIs overlap'}]});assert.equal(run({checks:[x]}).pass,true);});
-test('draft and renewal windows do not use fast lane proof',()=>{for(const window of ['draft','early','renewal'])blocked({cycle:{...cycle,window}},'not an authenticated');});
+test('mandatory overlap proof works across early fast and renewal Ready ages',()=>{
+  for(const window of ['early','fast','renewal'])
+    assert.equal(run({cycle:{...cycle,window}}).pass,true,window);
+});
+test('draft or unknown lifecycle rejects overlap proof',()=>{
+  for(const window of ['draft','unknown'])
+    blocked({cycle:{...cycle,window}},'not an authenticated');
+});
+test('proof created before the PR was opened cannot count',()=>{
+  blocked({pr:{...pr,created_at:'2026-11-20T12:00:00Z'}},'stale');
+});
+test('missing authenticated PR creation time fails closed',()=>{
+  blocked({pr:{...pr,created_at:undefined}},'stale');
+});
