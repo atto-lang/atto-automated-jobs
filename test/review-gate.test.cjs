@@ -249,6 +249,36 @@ test('collector rejects newly forged overlap check on second read',async()=>{
   try{await assert.rejects(collect(repo,42,'token'),/review or check changed/);}
   finally{globalThis.fetch=before;}
 });
+test('collector blocks base revision mutation even with unchanged PR HEAD',async()=>{
+  const before=globalThis.fetch;
+  globalThis.fetch=mockFetch(mockTable(),(path,n,data)=>{
+    if(path.endsWith('/pulls/42')&&n===2)
+      return {...data,base:{...data.base,sha:'f'.repeat(40)}};
+    return data;
+  }).fetch;
+  try{await assert.rejects(collect(repo,42,'token'),/PR changed during verification/);}
+  finally{globalThis.fetch=before;}
+});
+test('collector blocks author identity mutation between authenticated reads',async()=>{
+  const before=globalThis.fetch;
+  globalThis.fetch=mockFetch(mockTable(),(path,n,data)=>{
+    if(path.endsWith('/pulls/42')&&n===2)
+      return {...data,user:{id:5556}};
+    return data;
+  }).fetch;
+  try{await assert.rejects(collect(repo,42,'token'),/PR changed during verification/);}
+  finally{globalThis.fetch=before;}
+});
+test('collector blocks a trusted review permission revoked between reads',async()=>{
+  const before=globalThis.fetch;
+  globalThis.fetch=mockFetch(mockTable(),(path,n,data)=>{
+    if(path.endsWith('/collaborators/ORESoftware/permission')&&n===2)
+      return {permission:'read'};
+    return data;
+  }).fetch;
+  try{await assert.rejects(collect(repo,42,'token'),/permission changed during verification/);}
+  finally{globalThis.fetch=before;}
+});
 test('pagination fails closed if all twenty pages have 100 entries',async()=>{
   const before=globalThis.fetch;
   globalThis.fetch=async()=>({ok:true,json:async()=>Array(100).fill({})});
