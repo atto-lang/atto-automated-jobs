@@ -1,8 +1,8 @@
-# AttoLang parity: independent four-slot review admission
+# AttoLang parity: authenticated Ready-cycle review admission
 
 Tracking issue: https://github.com/atto-lang/atto-automated-jobs/issues/1
 
-## Four slots required before any merge
+## Four slots for Ready age below 72h and after the 240h renewal boundary
 
 | Slot | Verified identity | Pass criteria |
 | --- | --- | --- |
@@ -66,4 +66,12 @@ This gate's deterministic fixtures contain no private compiler source and should
 
 The read-only verifier now fetches the **complete GitHub lifecycle timeline twice**, validates event IDs/actors/order, PR `created_at`, current Draft flag and current hold labels, and records the current Ready/Draft cycle start, event ID, exact 72h/240h window and post-240h review cutoff. This rejects stale same-SHA approvals from earlier cycles and old ten-day approvals. Provider checks must also complete inside the applicable cycle/window.
 
-**Important:** The verifier is still NOT a production age-window merger. In particular, its four-review predicate remains conservative: the **72–240-hour fast lane deliberately fails closed** until a trusted, exhaustive competing-PR integration audit is connected. It cannot accept a PR body statement or unchecked `overlap=true` flag. Draft promotion, native required checks and actual GitHub rulesets still require independent deployment. Local synthetic tests and alternate-org runs are not source-required-check substitutes.
+**Important:** The verifier now selects the age-appropriate review quorum, but the **72–240-hour fast lane still fails closed unless an independently authenticated overlap-audit service signs a complete exact-head check**. That service has not been deployed or independently verified. It cannot accept a PR body statement or unchecked `overlap=true` flag. Draft promotion, native required checks and actual GitHub rulesets still require independent deployment. Local synthetic tests and alternate-org runs are not source-required-check substitutes.
+
+## Fast-lane trust contract (not deployed)
+
+At Ready age from 72 hours inclusive to 240 hours exclusive, the read-only verifier accepts one current-cycle, exact-head approved human with authenticated current write-level repository permission, **or** one verified formal AI family review with its separately pinned successful provider-App check. Named humans are not interchangeable with the author. Third-party human eligibility is re-read from the GitHub collaborator permission endpoint. At 240 hours, both designated humans and both independent AI families must review again after the boundary.
+
+The fast lane also requires a separate successful `atto-review/overlap-audit` check created by the dedicated independent GitHub App pinned in `ATTO_OVERLAP_AUDIT_APP_ID`. This App must not share the pinned identity of either AI reviewer App. Its `external_id` binds source repository, PR number, exact base SHA and exact head SHA in the format `atto-overlap:v1:<repo>:<number>:<base-sha>:<head-sha>`. Its JSON output summary must carry schema `atto.overlap-audit.v1`, complete scan scope markers for ready/draft PRs, related repos, legacy migration map and changed APIs/symbols; every candidate requires an immutable head, a reasoned semantic disposition and zero unresolved competitors. The check result is a trust assertion by the external producer, **not** a semantic scan performed by this script. A check name, arbitrary PR text or a self-declared manifest is not sufficient.
+
+This is a supplemental **read-only decision library**, not protected merge enforcement, the independent scanner itself, a Draft promoter or source-required CI. Required checks, branch protections, CODEOWNERS, security holds and final GitHub merge refusal all remain authoritative. The new overlap App is not provisioned: without a pinned App and valid signed check the fast lane denies. The synthetic `node --test test/*.test.cjs` suite does not replace executed source GitHub Actions or other required material tests.

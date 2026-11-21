@@ -10,9 +10,12 @@ const config = {
   humans: { the1mills: 2148448, ORESoftware: 1234567 },
   apps: { openai: 998801, anthropic: 998802 },
   aiReviewers: { openai: 887701, anthropic: 887702 },
+  overlapApp: 777001,
 };
 const review = (id, userId, state = 'APPROVED', sha = head, type = 'User') => ({
-  id, user: { id: userId, type }, state, commit_id: sha,
+  id, user: { id: userId, type,
+    login: userId === 2148448 ? 'the1mills' : userId === 1234567 ? 'ORESoftware' :
+      (type === 'Bot' ? 'bot-' + id : 'reviewer-' + userId) }, state, commit_id: sha,
   submitted_at: '2026-11-18T00:00:00Z',
 });
 const check = (id, name, appId, conclusion = 'success', sha = head) => ({
@@ -369,4 +372,81 @@ test('fast lane is blocked until an authenticated overlap audit is integrated', 
 test('hold labels fail closed even with all four fresh approvals', () => {
   const f = fixture(); f.pr.labels = [{ name: 'KEEP-AS-DRAFT' }];
   denied(f, 'hold label');
+});
+
+
+function withFastAudit(f) {
+  f.now = Date.parse('2026-11-21T12:00:00Z');
+  f.pr.number = 42;
+  f.pr.base.sha = 'b'.repeat(40);
+  const manifest = {
+    schema: 'atto.overlap-audit.v1', repo, pr: 42,
+    base: f.pr.base.sha, head, scan_complete: true, unresolved: 0,
+    scope: ['ready-and-draft-prs', 'related-repositories', 'legacy-migration-map', 'changed-apis-and-symbols'],
+    candidates: []
+  };
+  f.checks.push({
+    id: 91, name: 'atto-review/overlap-audit',
+    app: { id: 777001 }, head_sha: head,
+    external_id: 'atto-overlap:v1:' + repo + ':42:' + f.pr.base.sha + ':' + head,
+    status: 'completed', conclusion: 'success',
+    completed_at: '2026-11-20T00:00:00Z',
+    output: { summary: JSON.stringify(manifest) }
+  });
+  return f;
+}
+test('fast lane accepts exactly one eligible named human after trusted completed overlap audit', () => {
+  const f = withFastAudit(fixture());
+  f.reviews = f.reviews.filter(x => x.user.id === config.humans.ORESoftware);
+  f.checks = f.checks.filter(x => x.name === 'atto-review/overlap-audit');
+  assert.equal(verdict(f).pass, true, JSON.stringify(verdict(f).blockers));
+});
+test('fast lane allows one verified AI family with genuine review and provider check', () => {
+  const f = withFastAudit(fixture());
+  f.reviews = f.reviews.filter(x => x.user.id === config.aiReviewers.anthropic);
+  f.checks = f.checks.filter(x => x.name !== 'atto-review/openai');
+  assert.equal(verdict(f).pass, true, JSON.stringify(verdict(f).blockers));
+});
+test('fast lane never counts PR author approval; other independent reviewer can qualify', () => {
+  const f = withFastAudit(fixture());
+  f.pr.user.id = config.humans.the1mills;
+  f.reviews = f.reviews.filter(x => x.user.id === config.humans.ORESoftware);
+  f.checks = f.checks.filter(x => x.name === 'atto-review/overlap-audit');
+  assert.equal(verdict(f).pass, true, JSON.stringify(verdict(f).blockers));
+});
+test('fast lane rejects one stale named human review even with trusted overlap audit', () => {
+  const f = withFastAudit(fixture());
+  f.reviews = f.reviews.filter(x => x.user.id === config.humans.ORESoftware);
+  f.reviews[0].submitted_at = '2026-11-16T00:00:00Z';
+  f.checks = f.checks.filter(x => x.name === 'atto-review/overlap-audit');
+  denied(f, 'one independently eligible');
+});
+test('fast lane counts third reviewer only with verified current write permission', () => {
+  const f = withFastAudit(fixture());
+  f.reviews = [review(99, 994433, 'APPROVED', head, 'User')];
+  f.reviews[0].user.login = 'third-reviewer';
+  f.extraHumanPermissions = { 994433: { login: 'third-reviewer', permission: 'write' } };
+  f.checks = f.checks.filter(x => x.name === 'atto-review/overlap-audit');
+  assert.equal(verdict(f).pass, true, JSON.stringify(verdict(f).blockers));
+  f.extraHumanPermissions[994433].permission = 'read';
+  denied(f, 'one independently eligible');
+});
+test('fast lane rejects forged overlap App', () => {
+  const f = withFastAudit(fixture());
+  f.checks.find(x => x.name === 'atto-review/overlap-audit').app.id = 999888;
+  denied(f, 'fast-lane competing-PR audit');
+});
+test('fast lane rejects unresolved semantic overlap', () => {
+  const f = withFastAudit(fixture());
+  const audit = f.checks.find(x => x.name === 'atto-review/overlap-audit');
+  const data = JSON.parse(audit.output.summary);
+  data.unresolved = 1;
+  audit.output.summary = JSON.stringify(data);
+  denied(f, 'fast-lane competing-PR audit');
+});
+test('renewal never reuses one-reviewer fast-lane proof', () => {
+  const f = withFastAudit(fixture());
+  f.now = Date.parse('2026-12-01T12:00:00Z');
+  f.reviews = f.reviews.filter(x => x.user.id === config.humans.ORESoftware);
+  denied(f, 'the1mills');
 });
