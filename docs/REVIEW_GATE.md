@@ -56,7 +56,9 @@ real competing PR diffs.
 named human account IDs and collaborator permissions, full paginated reviews,
 lifecycle timeline, HEAD-bound check runs and immutable overlap App receipt.
 It fetches mutable PR, review, lifecycle and check evidence **twice** to
-detect changes during evaluation. It neither executes untrusted PR code nor
+detect changes during evaluation, including the PR base SHA, PR author ID
+and both trusted reviewers' current collaborator permissions. A protection-
+relevant change between reads invalidates the advisory result. It neither executes untrusted PR code nor
 writes or merges PRs.
 
 Run local source-only tests:
@@ -68,7 +70,7 @@ cargo run --locked -- validate
 cargo run --locked -- plan
 ```
 
-An isolated JavaScript harness ran **63/63 focused review, overlap and window
+An isolated JavaScript harness ran **66/66 focused review, overlap and window
 regression cases** against fetched exact draft source on 2026-11-21. That is
 **not** an executed Node, Rust or GitHub Actions CI receipt. The checked-in
 test harness must also pass on the real source exact head in stepful CI.
