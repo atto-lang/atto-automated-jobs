@@ -175,6 +175,10 @@ async function collect(repo, number, token) {
   ]);
   if (latest.head?.sha !== pr.head.sha || latest.updated_at !== pr.updated_at ||
       latest.state !== pr.state || latest.draft !== pr.draft ||
+      latest.number !== pr.number || latest.user?.id !== pr.user?.id ||
+      latest.base?.sha !== pr.base?.sha ||
+      latest.base?.repo?.full_name !== pr.base?.repo?.full_name ||
+      latest.base?.repo?.id !== pr.base?.repo?.id ||
       JSON.stringify(latest.labels?.map(x => x.name).sort()) !==
         JSON.stringify(pr.labels?.map(x => x.name).sort()))
     throw Error('PR changed during verification; rerun on latest head');
@@ -195,6 +199,15 @@ async function collect(repo, number, token) {
   if (reviewDigest(reviews) !== reviewDigest(freshReviews) ||
       checkDigest(checks) !== checkDigest(freshChecks))
     throw Error('review or check changed during verification; rerun');
+  // A collaborator can lose write-level authority without changing PR HEAD,
+  // its review objects, or the checks. Re-read permissions before admitting.
+  const [perm1Fresh, perm2Fresh] = await Promise.all([
+    api(base + '/collaborators/the1mills/permission', token),
+    api(base + '/collaborators/ORESoftware/permission', token),
+  ]);
+  if (perm1?.permission !== perm1Fresh?.permission ||
+      perm2?.permission !== perm2Fresh?.permission)
+    throw Error('trusted reviewer permission changed during verification; rerun');
   return {
     repo, pr, reviews, checks, timeline, now: Date.now(), repoId: repository.id,
     users: { the1mills: users1, ORESoftware: users2 },
