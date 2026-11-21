@@ -11,8 +11,9 @@ function verifyOverlapProof({ repo, pr, checks, appId, providerAppIds, cycle, no
   const sha = pr?.head?.sha;
   const base = pr?.base?.sha;
   const expected = 'atto-overlap:v1:' + repo + ':' + pr?.number + ':' + base + ':' + sha;
-  if (cycle?.window !== 'fast' || cycle?.ok !== true || cycle?.state !== 'ready')
-    errors.push('not an authenticated Ready fast-lane cycle');
+  if (cycle?.ok !== true || cycle?.state !== 'ready' ||
+      !['early', 'fast', 'renewal'].includes(cycle?.window))
+    errors.push('not an authenticated Ready lifecycle');
   if (!OID.test(sha || '') || !OID.test(base || '') ||
       !Number.isSafeInteger(pr?.number) || pr.number <= 0)
     errors.push('missing exact PR/head/base identity');
@@ -28,9 +29,11 @@ function verifyOverlapProof({ repo, pr, checks, appId, providerAppIds, cycle, no
   if (!candidate || candidate.status !== 'completed' || candidate.conclusion !== 'success')
     errors.push('missing successful trusted overlap audit');
   const finished = Date.parse(candidate?.completed_at || '');
-  const started = Date.parse(cycle?.cycleStart || '');
-  if (!Number.isFinite(finished) || !Number.isFinite(started) ||
-      !Number.isSafeInteger(now) || finished < started || finished > now)
+  // A valid proof is bound to the exact current HEAD and BASE, not to
+  // an obsolete Ready-age boundary or post-240-hour renewal clock.
+  const created = Date.parse(pr?.created_at || '');
+  if (!Number.isFinite(finished) || !Number.isFinite(created) ||
+      !Number.isSafeInteger(now) || finished < created || finished > now)
     errors.push('stale or future overlap audit');
   let receipt = null;
   try { receipt = JSON.parse(candidate?.output?.summary || 'null'); } catch { /* fail closed */ }
