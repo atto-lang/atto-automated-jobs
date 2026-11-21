@@ -2,16 +2,38 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { determineReviewAdmission } = require('../scripts/window-admission.cjs');
-function state(window = 'early') { return { cycle: {ok:true,state:'ready',window},human:{the1mills:true,ORESoftware:true},ai:{openai:true,anthropic:true},extraHuman:false,overlap:{pass:true} }; }
-test('early requires both human and both AI slots',()=>assert.equal(determineReviewAdmission(state()).pass,true));
-test('early rejects missing human',()=>{const x=state();x.human.ORESoftware=false;assert.equal(determineReviewAdmission(x).pass,false)});
-test('early rejects missing AI',()=>{const x=state();x.ai.anthropic=false;assert.equal(determineReviewAdmission(x).pass,false)});
-test('renewal again requires both human and AI slots',()=>{const x=state('renewal');assert.equal(determineReviewAdmission(x).pass,true);x.ai.openai=false;assert.equal(determineReviewAdmission(x).pass,false)});
-test('fast accepts one designated eligible human with trusted overlap audit',()=>{const x=state('fast');x.human.ORESoftware=false;x.ai.openai=false;x.ai.anthropic=false;assert.equal(determineReviewAdmission(x).pass,true)});
-test('fast accepts one eligible independent non-designated human',()=>{const x=state('fast');x.human.the1mills=false;x.human.ORESoftware=false;x.ai.openai=false;x.ai.anthropic=false;x.extraHuman=true;assert.equal(determineReviewAdmission(x).pass,true)});
-test('fast accepts one authenticated AI family with trusted overlap audit',()=>{const x=state('fast');x.human.the1mills=false;x.human.ORESoftware=false;x.ai.anthropic=false;assert.equal(determineReviewAdmission(x).pass,true)});
-test('fast rejects zero approvals',()=>{const x=state('fast');x.human.the1mills=false;x.human.ORESoftware=false;x.ai.openai=false;x.ai.anthropic=false;assert.equal(determineReviewAdmission(x).pass,false)});
-test('fast rejects missing overlap attestation',()=>{const x=state('fast');x.overlap={pass:false,blockers:['no audit']};assert.equal(determineReviewAdmission(x).pass,false)});
-test('draft rejects even four approvals and overlap',()=>{const x=state('draft');x.cycle.state='draft';assert.equal(determineReviewAdmission(x).pass,false)});
-test('invalid cycle rejects even four approvals',()=>{const x=state();x.cycle.ok=false;assert.equal(determineReviewAdmission(x).pass,false)});
-test('truthy strings and integers never qualify as an approval',()=>{const x=state('fast');x.human.the1mills='APPROVED';x.human.ORESoftware=1;x.ai.openai=1;x.ai.anthropic='yes';assert.equal(determineReviewAdmission(x).pass,false)});
+function state(window='early') {
+  return {cycle:{ok:true,state:'ready',window},
+    human:{the1mills:false,ORESoftware:true},
+    overlap:{pass:true}};
+}
+for(const lane of ['early','fast','renewal']){
+  test(lane+' admits exactly one independent designated owner with overlap',()=>{
+    assert.equal(determineReviewAdmission(state(lane)).pass,true);
+    const alt=state(lane);alt.human={the1mills:true,ORESoftware:false};
+    assert.equal(determineReviewAdmission(alt).pass,true);
+  });
+  test(lane+' denies zero owners even with two AI checks or third human',()=>{
+    const f=state(lane);f.human={the1mills:false,ORESoftware:false};
+    f.ai={openai:true,anthropic:true};f.extraHuman=true;
+    assert.equal(determineReviewAdmission(f).pass,false);
+  });
+  test(lane+' requires semantic overlap proof before merge',()=>{
+    const f=state(lane);f.overlap={pass:false};
+    assert.equal(determineReviewAdmission(f).pass,false);
+  });
+}
+test('nonboolean owner values do not count',()=>{
+  const f=state();f.human={the1mills:'APPROVED',ORESoftware:1};
+  assert.equal(determineReviewAdmission(f).pass,false);
+});
+test('draft, invalid and unknown cycles fail closed',()=>{
+  for(const cycle of [
+    {ok:true,state:'draft',window:'draft'},
+    {ok:false,state:'ready',window:'early'},
+    {ok:true,state:'ready',window:'unknown'}
+  ]){
+    const f=state();f.cycle=cycle;
+    assert.equal(determineReviewAdmission(f).pass,false);
+  }
+});
