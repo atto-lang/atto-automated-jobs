@@ -1,22 +1,25 @@
 'use strict';
-// This selects the applicable review quorum only. Callers MUST also enforce
-// every independent CI, security, CODEOWNERS, conflict and GitHub rule gate.
-function determineReviewAdmission({ cycle, human, ai, extraHuman, overlap }) {
+
+// Read-only advisory policy: exactly one independently verified, eligible
+// APPROVED GitHub review from EITHER designated human at ANY Ready age.
+// This cannot authorize a merge. Actual CODEOWNERS, protections, material CI,
+// holds, security and conflicts remain independently mandatory.
+function determineReviewAdmission({ cycle, human, overlap }) {
   const blockers = [];
-  if (cycle?.ok !== true || cycle?.state !== 'ready')
+  if (cycle?.ok !== true || cycle?.state !== 'ready' ||
+      !['early', 'fast', 'renewal'].includes(cycle?.window)) {
     blockers.push('authenticated Ready lifecycle required');
-  if (cycle?.window === 'early' || cycle?.window === 'renewal') {
-    for (const label of ['the1mills', 'ORESoftware'])
-      if (human?.[label] !== true) blockers.push(label + ': no eligible in-cycle exact-head approval');
-    for (const family of ['openai', 'anthropic'])
-      if (ai?.[family] !== true) blockers.push(family + ': no independently verified in-cycle exact-head approval');
-  } else if (cycle?.window === 'fast') {
-    const anyHuman = extraHuman === true || Object.values(human || {}).some(x => x === true);
-    const anyAi = Object.values(ai || {}).some(x => x === true);
-    if (!anyHuman && !anyAi)
-      blockers.push('fast lane requires one independently eligible exact-head approval');
-    if (overlap?.pass !== true) blockers.push('fast-lane competing-PR audit not independently verified');
-  } else blockers.push('unknown review window');
-  return { pass: blockers.length === 0, blockers };
+  }
+  if (human?.the1mills !== true && human?.ORESoftware !== true) {
+    blockers.push('one independent the1mills OR ORESoftware approval missing');
+  }
+  // Full semantic and legacy migration-map overlap discovery applies before
+  // EVERY merge, not merely between 72h and 240h. This proof is additional
+  // to the actual scan: it must be emitted by a separate pinned trusted App.
+  if (overlap?.pass !== true) {
+    blockers.push('competing-PR audit not independently verified');
+  }
+  return { pass: blockers.length === 0, blockers,
+    policy: 'single-independent-trusted-human-all-ready-ages' };
 }
 module.exports = { determineReviewAdmission };
