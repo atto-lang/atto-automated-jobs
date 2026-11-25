@@ -33,3 +33,18 @@ cargo run --locked -- plan
 ```
 
 `plan` is offline and read-only. Nightly `reconcile` requires `GH_TOKEN` with scoped repository access, and only generates draft PRs; it never merges, force-pushes, or changes application/runtime code.
+
+## Independent one-owner review and mandatory semantic-overlap audit
+
+The [read-only review verifier](docs/REVIEW_GATE.md) implements the current canonical
+single-human policy: exactly one independent, authenticated `APPROVED` review
+from either `the1mills` or `ORESoftware` at any Ready age. It rejects
+AI-only approvals, forged/dismissed/self approvals, blocked drafts and
+unverified cross-PR semantic overlaps. It does not require an OpenAI/Anthropic
+model-review quorum or repeat approvals after routine pushes.
+
+This validator is an **advisory evidence component, not a deployed GitHub
+merge-protection rule**. A separate authenticated overlap-audit App and
+effective GitHub branch/CODEOWNERS/required-CI protections are still
+necessary. Nightly parity-generated PRs remain draft; no auto-merge is
+enabled.
