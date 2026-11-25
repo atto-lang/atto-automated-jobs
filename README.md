@@ -1,6 +1,14 @@
+> **AI agent instructions (organization-wide):** Before working on code, issues, or pull requests, read and follow the [organization `AGENTS.md`](https://github.com/atto-lang/.github/blob/main/AGENTS.md), including its **merge-first stealth-development policy**. Honor any repository-local `AGENTS.md`, explicit holds, and GitHub-enforced rules.
+
 # Atto automated jobs
 
 This private repository owns scheduled AttoLang engineering automation, starting with the **nightly parity reconciler** for `atto-source.*`.
+
+## Canonical naming and compatibility policy
+
+This repository uses **AttoLang** exclusively in current documentation, source examples, generated draft PR descriptions, job labels and contract identifiers. Portable source uses `.atto`; compiler owners live under `atto-lang/atto-source.*`. The [canonical language specification](https://github.com/atto-lang/atto-spec) supersedes historical naming-era documentation, and any compatibility-only input must be explicitly admitted and scoped, never silently advertised as current language syntax.
+
+Nightly parity automation should refuse generated README or PR text containing retired project/organization identifiers, flag stale specification links, and distinguish intentional target-profile differences from accidental language-semantic divergence. Do not automatically rewrite executable code or claim conformance from a Markdown rename. Use an exact-source, reviewable draft PR and executed guest receipts before promotion.
 
 The source of truth is deliberately split:
 
